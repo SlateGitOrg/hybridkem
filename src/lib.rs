@@ -25,6 +25,7 @@ pub mod hybrid;
 pub mod kat;
 pub mod kem;
 pub mod mlkem;
+pub mod noise;
 mod secret;
 
 pub use error::{Error, Result};

@@ -21,6 +21,8 @@
 #![warn(missing_docs)]
 
 pub mod error;
+pub mod hybrid;
+pub mod kem;
 pub mod mlkem;
 mod secret;
 

@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod dudect;
 pub mod error;
 pub mod hybrid;
 pub mod kat;

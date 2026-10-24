@@ -298,20 +298,28 @@ impl Target {
             Target::SubtleCompare | Target::NaiveCompare => {
                 let mut base = vec![0u8; MlKem768::CT_LEN];
                 rng.fill_bytes(&mut base);
-                let equal = base.clone();
-                let mut differ = base.clone();
-                differ[0] ^= 0xFF;
-                let others = [equal, differ];
-                let subtle = self == Target::SubtleCompare;
-                measure(samples, self.reps(), seed, |c, _| {
-                    let a = black_box(&base[..]);
-                    let b = black_box(&others[c][..]);
-                    if subtle {
+                // Both classes compare against the *same* buffer; only its first byte is
+                // rewritten per measurement (equal for class 0, flipped for class 1). Using
+                // two separate buffers made the classes differ in memory address as well
+                // as content, which produced a spurious |t| of 27-126 for the branch-free
+                // `subtle` comparison in one binary layout (see DECISIONS.md).
+                let mut other = base.clone();
+                let first = base[0];
+                if self == Target::SubtleCompare {
+                    measure(samples, self.reps(), seed, |c, _| {
+                        other[0] = first ^ (0xFF * c as u8);
+                        let a = black_box(&base[..]);
+                        let b = black_box(&other[..]);
                         black_box(bool::from(a.ct_eq(b)));
-                    } else {
+                    })
+                } else {
+                    measure(samples, self.reps(), seed, |c, _| {
+                        other[0] = first ^ (0xFF * c as u8);
+                        let a = black_box(&base[..]);
+                        let b = black_box(&other[..]);
                         black_box(a == b);
-                    }
-                })
+                    })
+                }
             }
         };
         report(self, &m)

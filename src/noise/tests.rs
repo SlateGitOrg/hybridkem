@@ -415,3 +415,96 @@ fn framing_round_trip_and_limits() {
         Err(Error::MessageTooLarge { .. })
     ));
 }
+
+/// Review finding (fix round 1): in pqIK no token of message 1 uses the initiator's static
+/// *secret*, so anyone who knows the initiator's public key can write a message 1 that a
+/// pinned responder accepts. The forger cannot finish the session; `peer_authenticated`
+/// must report the payload as unauthenticated until a transport message decrypts.
+#[test]
+fn ik_message1_is_forgeable_from_public_key_but_reported_unauthenticated() {
+    let mut rng = StdRng::seed_from_u64(19);
+    let server = StaticKeypair::<XWing>::generate(&mut rng);
+    let client = StaticKeypair::<XWing>::generate(&mut rng);
+    let attacker = StaticKeypair::<XWing>::generate(&mut rng);
+    // The attacker knows only the client's public key.
+    let forged_identity = StaticKeypair::<XWing> {
+        secret: attacker.secret.clone(),
+        public: client.public.clone(),
+    };
+    let mut forger = Builder::<XWing>::new(Pattern::IK)
+        .local_static(forged_identity)
+        .remote_static(&server.public)
+        .build_initiator()
+        .unwrap();
+    let mut r = Builder::<XWing>::new(Pattern::IK)
+        .local_static(server)
+        .pin_peer(&client.public)
+        .build_responder()
+        .unwrap();
+
+    let m1 = forger
+        .write_message(b"transfer 100 to attacker", &mut rng)
+        .unwrap();
+    // The pin passes and the payload decrypts: message 1 carries no sender authentication.
+    assert_eq!(r.read_message(&m1).unwrap(), b"transfer 100 to attacker");
+    assert_eq!(r.remote_static(), Some(client.public.as_slice()));
+    assert!(
+        !r.peer_authenticated(),
+        "message-1 payload must not count as authenticated"
+    );
+
+    // Message 2 is encapsulated to the real client's key, which the forger cannot decapsulate.
+    let m2 = r.write_message(b"", &mut rng).unwrap();
+    assert!(matches!(forger.read_message(&m2), Err(Error::Decrypt)));
+    assert!(!forger.peer_authenticated());
+
+    // The responder finished its side but still has no proof, and a record the forger
+    // fabricates (it lacks the transport key) fails and proves nothing.
+    let mut tr = r.into_transport().unwrap();
+    assert!(!tr.peer_authenticated());
+    assert!(matches!(tr.decrypt(&[0u8; 48]), Err(Error::Decrypt)));
+    assert!(!tr.peer_authenticated());
+}
+
+#[test]
+fn peer_authenticated_follows_the_skem_rule_in_every_pattern() {
+    for pattern in Pattern::ALL {
+        let mut rng = StdRng::seed_from_u64(20);
+        let mut p = setup::<MlKem512>(pattern, &mut rng);
+        let mut step = 0;
+        while !p.initiator.is_finished() {
+            let initiator_writes = p.initiator.is_my_turn();
+            let (writer, reader) = if initiator_writes {
+                (&mut p.initiator, &mut p.responder)
+            } else {
+                (&mut p.responder, &mut p.initiator)
+            };
+            let msg = writer.write_message(b"", &mut rng).unwrap();
+            reader.read_message(&msg).unwrap();
+            step += 1;
+            // The responder never gets proof from a handshake message: no KEM token lets
+            // the initiator authenticate itself.
+            assert!(!p.responder.peer_authenticated(), "{pattern} step {step}");
+            // The initiator gets proof only on the last message (the first one it reads
+            // after its own skem to the responder's static key).
+            assert_eq!(
+                p.initiator.peer_authenticated(),
+                p.initiator.is_finished(),
+                "{pattern} step {step}"
+            );
+        }
+        let mut ti = p.initiator.into_transport().unwrap();
+        let mut tr = p.responder.into_transport().unwrap();
+        assert!(ti.peer_authenticated());
+        assert!(!tr.peer_authenticated());
+        let c = ti.encrypt(b"hi").unwrap();
+        tr.decrypt(&c).unwrap();
+        // NK's responder never encapsulates to an initiator static key: the peer stays
+        // anonymous. IK and XX responders are convinced by the first transport message.
+        assert_eq!(
+            tr.peer_authenticated(),
+            pattern != Pattern::NK,
+            "{pattern} responder after first transport message"
+        );
+    }
+}

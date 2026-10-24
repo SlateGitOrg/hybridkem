@@ -142,6 +142,11 @@ pub struct HandshakeState<K: Kem> {
     verifier: Option<PeerVerifier>,
     message_index: usize,
     failed: bool,
+    /// We have sent an `skem` to the peer's static key, so any later message that decrypts
+    /// proves the peer holds the matching static secret.
+    skem_to_peer: bool,
+    /// The peer has proven possession of the static key reported by `remote_static`.
+    peer_authenticated: bool,
 }
 
 impl<K: Kem> core::fmt::Debug for HandshakeState<K> {
@@ -207,6 +212,8 @@ impl<K: Kem> HandshakeState<K> {
             verifier: b.verifier,
             message_index: 0,
             failed: false,
+            skem_to_peer: false,
+            peer_authenticated: false,
         })
     }
 
@@ -238,8 +245,35 @@ impl<K: Kem> HandshakeState<K> {
     }
 
     /// The peer's static key, once known.
+    ///
+    /// This is the key the peer *claims* until [`peer_authenticated`](Self::peer_authenticated)
+    /// returns true. A pin or verifier only checks that the claimed key is acceptable; it does
+    /// not prove the sender holds the matching secret.
     pub fn remote_static(&self) -> Option<&[u8]> {
         self.rs.as_deref()
+    }
+
+    /// True once the peer has proven that it holds the secret key for
+    /// [`remote_static`](Self::remote_static).
+    ///
+    /// KEM authentication is implicit: a peer proves its static key only when a message
+    /// arrives that is encrypted under a key derived from an `skem` *we* encapsulated to that
+    /// key. Unlike Diffie-Hellman Noise (whose `ss`/`es` tokens authenticate the initiator in
+    /// IK message 1), no KEM token lets the sender authenticate itself, so:
+    ///
+    /// | pattern | initiator: responder proven | responder: initiator proven |
+    /// |---|---|---|
+    /// | `pqNK` | after reading message 2 | never (initiator is anonymous) |
+    /// | `pqIK` | after reading message 2 | only after the first transport message decrypts |
+    /// | `pqXX` | after reading message 4 | only after the first transport message decrypts |
+    ///
+    /// Payloads returned by [`read_message`](Self::read_message) while this is false have
+    /// **no sender authentication**: in `pqIK` anyone who knows the initiator's *public* key
+    /// can forge message 1 and its payload, and the responder's pin will accept it (the forger
+    /// cannot finish the handshake). See
+    /// [`TransportState::peer_authenticated`](super::TransportState::peer_authenticated).
+    pub fn peer_authenticated(&self) -> bool {
+        self.peer_authenticated
     }
 
     fn check_usable(&self, writing: bool) -> Result<()> {
@@ -271,6 +305,12 @@ impl<K: Kem> HandshakeState<K> {
     }
 
     /// Consume the peer's next handshake message, returning its decrypted payload.
+    ///
+    /// The payload is integrity-protected against tampering in transit, but it is only
+    /// attributable to the peer's static key if [`peer_authenticated`](Self::peer_authenticated)
+    /// is true after this call. For a responder that is never the case during the
+    /// handshake: treat `pqIK` message-1 and `pqXX` message-3 payloads as coming from an
+    /// unauthenticated sender (and, for message 1, as replayable with no forward secrecy).
     pub fn read_message(&mut self, message: &[u8]) -> Result<Vec<u8>> {
         self.check_usable(false)?;
         if message.len() > MAX_MESSAGE_LEN {
@@ -281,7 +321,12 @@ impl<K: Kem> HandshakeState<K> {
             });
         }
         let result = self.read_inner(message);
-        self.finish_step(result, "read")
+        let result = self.finish_step(result, "read");
+        if result.is_ok() && self.skem_to_peer {
+            // This message decrypted under a key that mixes in our `skem` to `rs`.
+            self.peer_authenticated = true;
+        }
+        result
     }
 
     fn finish_step<T: AsRef<[u8]>>(&mut self, result: Result<T>, verb: &str) -> Result<T> {
@@ -341,6 +386,9 @@ impl<K: Kem> HandshakeState<K> {
                     let ct = self.symmetric.encrypt_and_hash(&kem_ct)?;
                     out.extend_from_slice(&ct);
                     self.symmetric.mix_key(ss.as_bytes());
+                    if token == Token::Skem {
+                        self.skem_to_peer = true;
+                    }
                 }
             }
         }
@@ -431,6 +479,8 @@ impl<K: Kem> HandshakeState<K> {
             recv,
             self.symmetric.handshake_hash(),
             self.rs,
+            self.skem_to_peer,
+            self.peer_authenticated,
         ))
     }
 }

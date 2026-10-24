@@ -106,7 +106,7 @@ crosscheck_mlkem!(
 
 #[test]
 fn xwing_matches_rustcrypto() {
-    let mut rng = StdRng::seed_from_u64(0x0a11_ce);
+    let mut rng = StdRng::seed_from_u64(0x000a_11ce);
     for i in 0..ITERATIONS {
         let mut seed = [0u8; 32];
         let mut eseed = [0u8; 64];

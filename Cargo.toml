@@ -15,7 +15,7 @@ x25519-dalek = { version = "=3.0.0", features = ["static_secrets"] }
 chacha20poly1305 = "=0.11.0"
 hkdf = "=0.13.0"
 sha2 = "=0.11.1"
-subtle = "=2.6.1"
+subtle = { version = "=2.6.1", features = ["const-generics", "core_hint_black_box"] }
 zeroize = { version = "=1.9.1", features = ["derive"] }
 rand_core = "=0.10.1"
 rand = "=0.10.3"

@@ -111,11 +111,14 @@ let mut r = Builder::new(Pattern::IK).local_static(server)
     .pin_peer(&client.public).build_responder()?;
 
 let m1 = i.write_message(b"hello", &mut rng)?;
-r.read_message(&m1)?;
+r.read_message(&m1)?;               // NOT sender-authenticated: forgeable from client.public
+assert!(!r.peer_authenticated());
 let m2 = r.write_message(b"", &mut rng)?;
 i.read_message(&m2)?;
+assert!(i.peer_authenticated());    // the server has proven its static key
 let (mut tx, mut rx) = (i.into_transport()?, r.into_transport()?);
 assert_eq!(rx.decrypt(&tx.encrypt(b"post-quantum")?)?, b"post-quantum");
+assert!(rx.peer_authenticated());   // now the client has proven its static key
 ```
 
 ## Demo
@@ -202,9 +205,9 @@ all sizes per algorithm (public key / ciphertext bytes):
 | Differential vs RustCrypto `x-wing` 0.1.1 | same | 64 random seeds, all identical |
 | Exhaustive: Barrett reduction, `Compress`/`Decompress` for every input and `d` | `cargo test --lib` | pass |
 | Property tests (NTT vs schoolbook, encode/decode, KEM round trip, single-bit tamper, garbage inputs, handshakes) | `cargo test` | pass |
-| Line coverage (cargo-llvm-cov, all of `src/` incl. in-file unit-test modules) | `make coverage` | 98.17% lines, 97.34% functions, 96.25% regions (gate: 80% lines) |
+| Line coverage (cargo-llvm-cov, all of `src/` incl. in-file unit-test modules) | `make coverage` | 98.19% lines, 97.36% functions, 96.27% regions (gate: 80% lines) |
 
-Test counts from the last `make check`: 86 unit tests, 21 integration/property/CLI tests in `tests/`, 2 doctests, all passing (`make check` exit 0).
+Test counts from the last `make check`: 88 unit tests, 21 integration/property/CLI tests in `tests/`, 2 doctests, all passing (`make check` exit 0).
 
 ## Benchmarks
 
@@ -325,6 +328,12 @@ Full log with costs in [DECISIONS.md](DECISIONS.md).
   on the stack or in registers.
 - **Performance** is about 1.2-1.8x slower (Criterion, same run) than an optimized implementation on decapsulation; no SIMD, no
   Montgomery/lazy reduction.
+- **Responder-side handshake payloads are not sender-authenticated.** Anyone who knows a
+  client's *public* key can forge a pqIK message 1 (or pqXX message 3) with any payload, and a
+  responder that pinned that client accepts it; the forger cannot complete the handshake.
+  KEM tokens give no way to authenticate message 1 the way Noise IK's `ss` does. Act on such
+  payloads only once `peer_authenticated()` is true (for the responder: after the first
+  transport message decrypts). See the threat model.
 - **First-message (0-RTT) payloads** in pqIK/pqNK lack forward secrecy and are replayable;
   `pqXX` without a verifier only resists passive attackers (see the threat model).
 - **Coverage figure includes in-file unit-test code**, which `cargo-llvm-cov` cannot exclude

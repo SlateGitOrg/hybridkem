@@ -150,6 +150,12 @@ pqIK:  <- s ... -> skem, e, s       <- ekem, skem
 pqXX:           -> e   <- ekem, s   -> skem, s   <- skem
 ```
 
+A KEM token proves possession of a static secret only to the party that encapsulated: the
+engine sets `skem_to_peer` when it writes an `skem`, and `peer_authenticated` once any later
+message (handshake or transport) decrypts. Hence an IK/XX responder is convinced only by the
+first transport message, and the pqIK message-1 payload is forgeable by anyone who knows the
+initiator's public key (see `docs/THREAT_MODEL.md`).
+
 After the last message `Split()` derives one ChaCha20-Poly1305 key per direction; nonces
 are 64-bit counters encoded as `0^32 || LE64(n)`, with `2^64 - 1` reserved for `Rekey`.
 

@@ -16,6 +16,10 @@
 //!
 //! Every message ends with `EncryptAndHash(payload)`.
 //!
+//! **Authentication is one-directional per `skem`.** Handshake payloads read before
+//! [`HandshakeState::peer_authenticated`] is true are not sender-authenticated; for a `pqIK`
+//! or `pqXX` responder that covers every handshake payload (see [`pattern`]).
+//!
 //! ```
 //! use hybridkem::hybrid::XWing;
 //! use hybridkem::noise::{Builder, Pattern, StaticKeypair};
@@ -35,12 +39,17 @@
 //!
 //! let m1 = i.write_message(b"hello", &mut rng)?;
 //! assert_eq!(r.read_message(&m1)?, b"hello");
+//! // KEM tokens cannot authenticate message 1: anyone who knows `client.public` could
+//! // have written it. Do not act on this payload as the client's.
+//! assert!(!r.peer_authenticated());
 //! let m2 = r.write_message(b"welcome", &mut rng)?;
 //! assert_eq!(i.read_message(&m2)?, b"welcome");
+//! assert!(i.peer_authenticated()); // the server has proven its static key
 //!
 //! let (mut ti, mut tr) = (i.into_transport()?, r.into_transport()?);
 //! let ct = ti.encrypt(b"post-quantum secret")?;
 //! assert_eq!(tr.decrypt(&ct)?, b"post-quantum secret");
+//! assert!(tr.peer_authenticated()); // now the client has proven its static key
 //! # Ok::<(), hybridkem::Error>(())
 //! ```
 

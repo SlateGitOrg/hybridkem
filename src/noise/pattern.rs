@@ -10,6 +10,15 @@
 //!
 //! Authentication is therefore *implicit*: a party proves it holds its static key by being
 //! able to read (and write) messages encrypted under keys derived from an `skem` aimed at it.
+//!
+//! A consequence with no counterpart in DH-based Noise: no token lets a party authenticate
+//! *itself* to the receiver of its own message. The proof only reaches the side that sent
+//! the `skem`, when the next message decrypts. So the responder of `pqIK` and `pqXX` learns
+//! that the initiator really holds its static key only from the first transport message,
+//! and handshake payloads it reads before that (pqIK message 1, pqXX message 3) can be
+//! written by anyone who knows the initiator's *public* key. Check
+//! [`HandshakeState::peer_authenticated`](super::HandshakeState::peer_authenticated) before
+//! acting on a payload as if it came from the claimed peer.
 
 /// A handshake token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,10 +40,15 @@ pub enum Pattern {
     /// authenticated (the TLS-like shape). Two messages.
     NK,
     /// `pqIK`: the initiator knows the responder's static key and sends its own static key
-    /// in the first message. Mutual authentication in two messages (one round trip).
+    /// in the first message. Mutual authentication once the handshake (two messages, one
+    /// round trip) completes and the responder has decrypted a first transport message;
+    /// the message-1 payload has **no sender authentication** (anyone who knows the
+    /// initiator's public key can forge it, though not complete the handshake).
     IK,
     /// `pqXX`: neither side knows the other in advance; static keys are exchanged encrypted
-    /// and checked against a trust policy. Mutual authentication in four messages.
+    /// and checked against a trust policy. Mutual authentication in four messages; as in
+    /// `pqIK`, the responder's proof of the initiator arrives with the first transport
+    /// message, so the message-3 payload is not sender-authenticated.
     XX,
 }
 

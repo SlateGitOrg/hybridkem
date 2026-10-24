@@ -15,7 +15,7 @@
 //!   `pqXX`), ChaCha20-Poly1305 transport and length-prefixed framing over any byte stream.
 //! * [`kem`] — the [`kem::Kem`] trait tying these together, plus runtime algorithm selection.
 //! * [`dudect`] — a dudect-style fixed-vs-random timing-leak detector.
-//! * [`bench`] — a median-of-N timing harness for the per-parameter-set table.
+//! * [`bench`](mod@bench) — a median-of-N timing harness for the per-parameter-set table.
 //! * [`kat`] — loaders and runners for the pinned known-answer vectors.
 
 #![forbid(unsafe_code)]

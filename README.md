@@ -15,7 +15,7 @@ authenticated handshake built on those KEMs with ChaCha20-Poly1305 transport.
 "Harvest now, decrypt later" is the reason TLS, SSH and messaging protocols are moving to
 hybrid post-quantum key exchange today. Reading FIPS 203 is one thing; seeing how the NTT,
 the Fujisaki-Okamoto transform, the hybrid combiner and a KEM-based handshake fit together
-in about 4,500 lines of tested code is another. This repository is for:
+in about 4,600 lines of tested code (`scripts/loc.sh`: non-test lines under `src/`) is another. This repository is for:
 
 - engineers who need to review or integrate ML-KEM and want a readable reference that maps
   one-to-one onto the algorithms in the standard;
@@ -70,7 +70,7 @@ the hybrids or a classical X25519 baseline. Details, algorithms and complexity:
 
 ## Quickstart
 
-Requires Rust 1.85+ (developed on 1.97.1). Everything runs offline.
+Developed and tested with Rust 1.97.1 (`rust-version` is set to 1.85, but older compilers were not tested). Everything runs offline.
 
 ```sh
 make check        # fmt + clippy -D warnings + rustdoc + all tests under a >=80% coverage gate + vector checksums
@@ -209,7 +209,7 @@ Test counts from the last `make check`: 86 unit tests, 21 integration/property/C
 ## Benchmarks
 
 Apple M1 Pro (8 cores), macOS 26.6, rustc 1.97.1, release profile with thin LTO. The machine
-was shared with other build jobs while measuring, so treat numbers as indicative (±15%).
+was shared with other build jobs while measuring, so treat the numbers as indicative: medians for the same operation differed by up to about 20% between repeated runs.
 
 Median of 2000 runs per operation (`make bench-table`, which runs
 `cargo run --release -- bench --iters 2000`); "encaps" includes parsing and validating the

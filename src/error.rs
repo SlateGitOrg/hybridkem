@@ -53,6 +53,10 @@ pub enum Error {
     #[error("missing key: {0}")]
     MissingKey(&'static str),
 
+    /// A handshake was configured inconsistently with its pattern.
+    #[error("invalid handshake configuration: {0}")]
+    InvalidConfig(&'static str),
+
     /// The peer presented a static key that the trust policy rejected.
     #[error("peer static key rejected by trust policy")]
     UntrustedPeer,

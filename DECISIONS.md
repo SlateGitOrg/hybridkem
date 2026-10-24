@@ -1,0 +1,56 @@
+# Decisions
+
+Rulings made while building, in the form `Ruling: what — why — cost if wrong`.
+
+## Scope and dependencies
+
+- Ruling: implement ML-KEM (FIPS 203) from the standard, but take SHA3-256/512 and SHAKE128/256 (FIPS 202) from the RustCrypto `sha3` and `shake` crates — the brief asks for ML-KEM from the spec, and Keccak is a separate standard with mature, tested implementations — if a reviewer expected Keccak in-tree too, that is roughly 150 lines to add, and the hash wrappers in `src/mlkem/hash.rs` are the only call sites.
+- Ruling: use `x25519-dalek`, `chacha20poly1305`, `hkdf` and `sha2` for the classical pieces — the project's subject is the post-quantum KEM, the combiner and the handshake, not the classical primitives — none expected; hand-rolling these would add risk and teach little.
+- Ruling: pin every dependency with `=x.y.z` and commit `Cargo.lock`, using the newest coherent RustCrypto generation (`digest 0.11`, `rand_core 0.10`, `sha3 0.12`, `ml-kem 0.3.3`) — reproducible builds, and one generation avoids duplicate trait families — these releases are newer than much of the ecosystem; if one is yanked, the lockfile still builds but upgrades need care.
+- Ruling: the RustCrypto `ml-kem` and `x-wing` crates are dev-dependencies, used in `tests/crosscheck.rs` and as a labelled reference point in `benches/kem.rs` — the brief says "cross-check vs the ml-kem crate in tests only"; benches are dev-only targets that are never linked into the library or binary — if "tests only" was meant strictly, removing the reference bench is a 15-line deletion.
+
+## ML-KEM implementation
+
+- Ruling: coefficients are canonical `u16` in `[0, q)` with Barrett reduction and mask-based conditional subtraction, not Montgomery form with lazy reduction — every intermediate can be read against the spec's pseudocode — about 1.5-2x slower than an optimized reference (see README benchmarks against the `ml-kem` crate).
+- Ruling: the parameter set is a sealed trait with associated consts and polynomial vectors are `Vec<Poly>` — stable Rust cannot size arrays by an associated const (`[Poly; P::K]` needs `generic_const_exprs`) — a few small heap allocations per operation.
+- Ruling: `EncapsulationKey` caches the expanded matrix `A-hat` (k² polynomials, 4.5 KiB for ML-KEM-768) — encapsulation and decapsulation's re-encryption skip k² `SampleNTT` calls — extra memory per parsed key; parsing a key costs the expansion once.
+- Ruling: `Compress_d` divides by q with a precomputed reciprocal (`ceil(2^35/q)`, multiply and shift) — hardware division latency can depend on operands on some CPUs, and this was the source of the KyberSlash timing bug in other implementations — correctness rests on an exhaustive test over every `x < q` and `d <= 11`, which runs in `make check`.
+- Ruling: `SampleNTT` squeezes a whole 168-byte SHAKE128 block at a time and has a data-dependent loop — it only touches the public seed `rho`, so this leaks nothing, and the byte stream is identical to squeezing 3 bytes at a time — none.
+- Ruling: secret keys are stored in seed form (`d || z`, 64 bytes), and the expanded FIPS form is also accepted — FIPS 203 recommends seeds, but ACVP decapsulation vectors use the expanded form — two code paths to maintain.
+- Ruling: when parsing an expanded decapsulation key, run the encapsulation-key modulus check on its embedded `ek` in addition to the required hash check — a key that `KeyGen` could never produce is better rejected early — strictly stricter than FIPS 203 Section 7.3; all 30 ACVP `decapsulationKeyCheck` vectors still pass.
+- Ruling: implicit rejection uses `subtle::ConstantTimeEq` on the ciphertext and `ConditionallySelectable` on the 32-byte key — that is the one place where secret data would otherwise naturally become a branch — `subtle` is best-effort against the optimizer; the dudect test is the empirical check.
+
+## Test vectors
+
+- Ruling: use the NIST ACVP-Server `internalProjection.json` files for `ML-KEM-keyGen-FIPS203` and `ML-KEM-encapDecap-FIPS203` pinned at commit `ad33b3d9` (2026-07-28), and commit them (2.0 MB) alongside a checksum-verifying fetch script — `make check` must run offline, and the internal projection carries the expected answers next to the inputs — if NIST corrects the vectors again, bump the commit and the checksums together.
+- Ruling: verify `vectors/SHA256SUMS` inside the test harness (`kat::verify_checksums`) before using any vector — a silently edited vector could otherwise make a wrong implementation look right — none.
+- Ruling: do not use the C2SP/CCTV "accumulated" ML-KEM vectors — the directory was last updated in January 2024 and targets the FIPS 203 initial public draft, whose `K-PKE.KeyGen` lacks the final standard's domain-separation byte, so its hashes cannot match a final-FIPS implementation — the 64-iteration-per-set differential test against the `ml-kem` crate gives similar random coverage.
+- Ruling: X-Wing vectors come from `spec/test-vectors.json` in the draft's own repository at commit `5cb311dc` (draft-06 era, "Move label and use SHAKE-256 for private key expansion") — it is the upstream source; the RustCrypto `x-wing` crate ships the identical JSON — later draft revisions could change the vectors.
+
+## Hybrid KEM
+
+- Ruling: offer two combiners: exact X-Wing (ML-KEM-768 only) and a "transcript" combiner for all three parameter sets — X-Wing is the emerging standard and testable against vectors, but it is only defined for ML-KEM-768 and its smaller hash depends on ML-KEM's ciphertext-binding (C2PRI) property — the transcript combiner is this project's own construction (`SHA3-256(len(label) || label || ss_M || ss_X || H(ct_M) || ct_X || H(ek_M) || pk_X)`) and is not interoperable with anything.
+- Ruling: X-Wing accepts an all-zero X25519 output while the transcript hybrids and the X25519 baseline reject it with `Error::NonContributory` — draft-06 says nothing about the check and both its vectors and the `x-wing` crate's default key accept; CFRG has since said one behaviour will be standardized — if the RFC requires rejection, flip `XWingCombiner::REJECT_NON_CONTRIBUTORY`.
+- Ruling: hybrid secret keys are a 32-byte seed expanded with SHAKE256 into the ML-KEM seed and the X25519 scalar, for both combiners — this is X-Wing's key format, and reusing it keeps one key layout — expanding on load costs one ML-KEM key generation.
+
+## Handshake
+
+- Ruling: build a Noise-*style* engine with PQNoise's `ekem`/`skem` tokens rather than claiming Noise or PQNoise compliance — Noise has no standard KEM tokens, and the detailed PQNoise rules (e.g. which ciphertexts are encrypted) are reproduced from the paper's description, not checked against a reference — the protocol name is prefixed `HybridNoise_` so it cannot be confused with a registered Noise protocol; there is no interoperability with other implementations.
+- Ruling: both `ekem` and `skem` ciphertexts go through `EncryptAndHash` (which is a plain `MixHash` before a key exists) — one uniform rule, and once a key exists it hides KEM ciphertexts from a passive observer — slightly more bytes (16-byte tag) per encrypted token than sending them in the clear.
+- Ruling: implement the `pqNK`, `pqIK` and `pqXX` patterns — one-sided, one-round-trip mutual, and no-prior-knowledge mutual authentication cover the common deployment shapes — other patterns (`KK`, `NN`, PSK modes) are not available.
+- Ruling: a configured `remote_static` is a pre-message for IK/NK initiators and a pin everywhere else; without a pin or verifier, keys received in-band are accepted — this mirrors Noise, where trust decisions belong to the application — an XX deployment that forgets the verifier gets confidentiality against passive attackers only; the docs and the threat model say so.
+- Ruling: a handshake that fails once is dead (`failed` flag) — after a failed read the transcript hash is undefined and continuing would be unsafe — callers must start over.
+- Ruling: frames are a 2-byte big-endian length plus payload, and messages are capped at 65535 bytes — this is the Noise specification's guidance for stream transports — plaintexts above 65519 bytes are split across frames by `SecureStream::send`.
+
+## Constant-time testing and benchmarks
+
+- Ruling: implement the dudect method in-tree (Welch's t-test, random class interleaving, 20-step percentile crop ladder, |t| thresholds 4.5/10) rather than depending on the `dudect-bencher` crate — it is about 200 lines and fully unit-tested — no second-order or multi-threshold refinements beyond the crop ladder.
+- Ruling: include a deliberately leaky target (`==` on 1088-byte buffers) as a positive control and fail `ct-test` if it is *not* detected — a timing test that cannot detect anything is worse than none — the control needs enough samples to clear |t| 10, which 5000+ always did in our runs.
+- Ruling: time with `std::time::Instant` and batch 64 calls per measurement for the sub-microsecond comparison targets — on Apple Silicon the clock ticks every ~41.7 ns, too coarse for single 1 KB comparisons — batching averages within a sample, which can hide a leak that only shows on some calls.
+- Ruling: the README table comes from a median-of-N CLI harness (`make bench-table`); Criterion (`make bench`) provides the per-parameter-set statistical benchmarks — one command prints every algorithm and handshake in seconds — medians on a shared laptop still vary run to run, so the README states the machine and conditions.
+
+## Tooling
+
+- Ruling: the coverage gate (`cargo llvm-cov --fail-under-lines 80`) counts all of `src/`, including in-file `#[cfg(test)]` modules — `cargo-llvm-cov` cannot exclude them without nightly-only attributes — this inflates the percentage a little; per-file numbers in the README show the non-test-heavy files are also above 88%.
+- Ruling: the demo uses a seeded `StdRng` so its output is reproducible, while `keygen`/`encaps` use the thread CSPRNG — the README can paste demo output that anyone can regenerate — never copy the demo's key generation into real code.
+- Ruling: CLI key files are single-line hex, not PEM/PKCS#8 — simple to inspect and to diff — no interoperability with other tools' key formats.

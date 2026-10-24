@@ -22,6 +22,7 @@
 
 pub mod error;
 pub mod hybrid;
+pub mod kat;
 pub mod kem;
 pub mod mlkem;
 mod secret;

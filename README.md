@@ -1,5 +1,7 @@
 # hybridkem
 
+[![CI](https://github.com/SlateGitOrg/hybridkem/actions/workflows/ci.yml/badge.svg)](https://github.com/SlateGitOrg/hybridkem/actions/workflows/ci.yml)
+
 > **Educational, not audited.** This is a study implementation of post-quantum key exchange.
 > It has had no external review, its constant-time behaviour is checked only by code review
 > and a statistical timing test, and it must not be used to protect real data. For
@@ -19,7 +21,7 @@ in about 4,600 lines of tested code (`scripts/loc.sh`: non-test lines under `src
 
 - engineers who need to review or integrate ML-KEM and want a readable reference that maps
   one-to-one onto the algorithms in the standard;
-- students of applied cryptography who want to see why KEM-based handshakes look different
+- readers of applied cryptography who want to see why KEM-based handshakes look different
   from Diffie-Hellman ones (PQNoise's `ekem`/`skem` tokens);
 - anyone curious what the hybrid actually costs in bytes and microseconds.
 
@@ -342,8 +344,6 @@ Full log with costs in [DECISIONS.md](DECISIONS.md).
   outliers on several runs.
 - The C2SP "accumulated" vectors are not used (they target the FIPS 203 draft, not the
   final standard); random coverage comes from the differential test instead.
-- CI (`.github/workflows/ci.yml`) is written but has not run, because the repository has not
-  been pushed.
 
 ## Roadmap
 
@@ -365,4 +365,4 @@ Full log with costs in [DECISIONS.md](DECISIONS.md).
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Test vectors keep their upstream terms; see [DATA.md](DATA.md).
+MIT — see [LICENSE](LICENSE). Test vectors keep their upstream terms; see [DATA.md](DATA.md).

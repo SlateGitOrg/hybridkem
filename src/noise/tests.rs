@@ -416,7 +416,7 @@ fn framing_round_trip_and_limits() {
     ));
 }
 
-/// Review finding (fix round 1): in pqIK no token of message 1 uses the initiator's static
+/// Regression: in pqIK no token of message 1 uses the initiator's static
 /// *secret*, so anyone who knows the initiator's public key can write a message 1 that a
 /// pinned responder accepts. The forger cannot finish the session; `peer_authenticated`
 /// must report the payload as unauthenticated until a transport message decrypts.
